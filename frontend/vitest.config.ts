@@ -8,11 +8,8 @@ export default defineConfig({
     setupFiles: './src/test-setup.ts',
     css: true,
     restoreMocks: true,
-    pool: 'threads',
-    poolOptions: {
-      threads: {
-        singleThread: true,
-      },
-    },
+    pool: 'vmThreads',
+    fileParallelism: false,
+    maxWorkers: 1,
   },
 })
