@@ -23,7 +23,7 @@ COPY backend/requirements.lock ./requirements.lock
 RUN python -m pip install --no-cache-dir --requirement requirements.lock
 
 COPY backend/app ./app
-COPY frontend/dist /usr/share/nginx/html
+COPY --from=frontend-build /frontend/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/start.sh /usr/local/bin/repoready-start
 RUN chmod +x /usr/local/bin/repoready-start && mkdir -p /data
