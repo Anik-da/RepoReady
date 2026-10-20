@@ -27,7 +27,7 @@ import type {
 } from './types'
 import './styles.css'
 
-type View = 'overview' | 'repositories' | 'reports' | 'history' | 'compare'
+type View = 'landing' | 'overview' | 'repositories' | 'reports' | 'history' | 'compare'
 type QueryState<T> =
   | { status: 'idle'; data?: undefined; error?: undefined }
   | { status: 'loading'; data?: undefined; error?: undefined }
@@ -50,6 +50,7 @@ const navItems: Array<{ id: View; label: string; icon: IconName; shortcut: strin
 ]
 
 const viewMeta: Record<View, { eyebrow: string; title: string; description: string }> = {
+  landing: { eyebrow: 'RepoReady / start here', title: 'Know what ships next.', description: 'A deterministic read on whether a repository can be installed, tested, and rebuilt on a clean machine.' },
   overview: { eyebrow: 'Workspace / overview', title: 'Repository health, in one signal.', description: 'See what changed, what needs attention, and where to look next.' },
   repositories: { eyebrow: 'Workspace / repositories', title: 'Bring a repository into focus.', description: 'Connect a Git URL or upload a ZIP. RepoReady keeps the import boundary explicit.' },
   reports: { eyebrow: 'Workspace / scan reports', title: 'Findings with enough context to act.', description: 'Filter by severity, open the exact file, and export a review-ready report.' },
@@ -205,6 +206,10 @@ function OverviewPage({ state, onRetry, onRunScan, onOpenReport, onExport }: { s
 
 function SectionHeading({ label, title, action }: { label: string; title: string; action?: ReactNode }) {
   return <div className="section-heading"><div><span className="section-label">{label}</span><h3>{title}</h3></div>{action ? <div className="section-heading__action">{action}</div> : null}</div>
+}
+
+function LandingPage({ onStart, onWorkspace }: { onStart: () => void; onWorkspace: () => void }) {
+  return <div className="landing-page"><section className="landing-hero"><div className="landing-hero__copy"><span className="eyebrow"><span className="live-dot" />Repository reproducibility</span><h2>Ship the repository you meant to share.</h2><p>RepoReady checks dependency contracts, configuration, tests, Docker, and documentation before a clean machine finds the gaps.</p><div className="landing-actions"><button className="button button--primary" onClick={onStart}>Analyze a repository <Icon name="arrow-up-right" size={16} /></button><button className="button button--secondary" onClick={onWorkspace}>Open workspace <Icon name="activity" size={16} /></button></div><span className="landing-note"><Icon name="lock" size={13} />Local-first analysis · no external AI service required</span></div><div className="landing-signal" aria-hidden="true"><div className="landing-signal__grid" /><div className="landing-signal__core"><AppMark /><strong>READY?</strong><span>evidence over guesswork</span></div><span className="landing-signal__tag landing-signal__tag--one">LOCKFILES</span><span className="landing-signal__tag landing-signal__tag--two">ENV TEMPLATES</span><span className="landing-signal__tag landing-signal__tag--three">TEST READINESS</span></div></section><section className="landing-section"><div><span className="section-label">How it works</span><h3>One scan. Five signals.</h3></div><div className="landing-steps"><article><span>01</span><strong>Import</strong><p>Upload a ZIP or provide a public HTTPS Git URL. Untrusted contents stay inside bounded temporary workspaces.</p></article><article><span>02</span><strong>Inspect</strong><p>Deterministic rules inspect manifests, environment references, test conventions, Docker instructions, and docs.</p></article><article><span>03</span><strong>Act</strong><p>Open evidence, follow remediation guidance, export the report, and compare the next scan to verify change.</p></article></div></section><section className="landing-sample"><div><span className="section-label">Sample data</span><h3>Reports are built for a fix, not a shrug.</h3><p>This preview is illustrative only. Live scores and findings appear after a real repository scan.</p></div><div className="sample-report"><div><span>HEALTH SCORE</span><strong>86<small>/100</small></strong></div><div><span>OPEN FINDINGS</span><strong>12</strong></div><div className="sample-report__finding"><span className="severity-tag severity-tag--high">High</span><strong>JavaScript lockfile is missing</strong><small>package.json · evidence attached</small></div></div></section></div>
 }
 
 function ImportPage({ activeScan, onStart, onOpenReport }: { activeScan?: ActiveScan; onStart: (input: ImportInput) => Promise<void>; onOpenReport: () => void }) {
@@ -478,7 +483,7 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to content</a>
       <aside className={`sidebar ${mobileNavOpen ? 'sidebar--open' : ''}`}>
-        <div className="brand"><AppMark /><span className="brand-wordmark">Repo<span>Ready</span></span><span className="brand-version">BETA</span></div>
+        <button className="brand brand-button" onClick={() => { setView('landing'); setMobileNavOpen(false) }} aria-label="Open RepoReady start page"><AppMark /><span className="brand-wordmark">Repo<span>Ready</span></span><span className="brand-version">BETA</span></button>
         <div className="workspace-switcher"><span className="workspace-avatar">A</span><span><strong>Acme engineering</strong><small>Personal workspace</small></span><Icon name="chevron-down" size={15} /></div>
         <nav className="primary-nav" aria-label="Primary navigation">{navItems.map(item => <button key={item.id} className={`nav-item ${view === item.id ? 'nav-item--active' : ''}`} onClick={() => { setView(item.id); setMobileNavOpen(false) }}><Icon name={item.icon} size={17} /><span>{item.label}</span><kbd>{item.shortcut}</kbd></button>)}</nav>
         <div className="sidebar-section"><span className="sidebar-section__label">Workspace</span><button className="sidebar-link" onClick={() => { setView('repositories'); setMobileNavOpen(false) }}><Icon name="plus" size={15} />Add repository</button><button className="sidebar-link" onClick={() => setToast('Keyboard shortcuts are coming soon.')}><Icon name="terminal" size={15} />Command palette <kbd>⌘K</kbd></button></div>
@@ -486,15 +491,16 @@ export default function App() {
       </aside>
       {mobileNavOpen ? <button className="sidebar-overlay" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} /> : null}
       <div className="main-shell">
-        <header className="topbar"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Icon name="menu" size={20} /></button><div className="breadcrumbs"><span>RepoReady</span><Icon name="chevron-right" size={14} /><strong>{currentMeta.eyebrow.split(' / ')[1]}</strong></div><div className="topbar-actions"><span className="topbar-env"><span className="live-dot" />Development</span><button className="icon-button" aria-label="Notifications"><Icon name="bell" size={17} /></button><button className="avatar-button" aria-label="Open profile">AK</button></div></header>
-        <main id="main-content" className="main-content"><div className="page-heading"><div><span className="eyebrow">{currentMeta.eyebrow}</span><h1>{currentMeta.title}</h1><p>{currentMeta.description}</p></div>{view === 'overview' || view === 'reports' ? <button className="button button--primary page-heading__cta" onClick={() => setView('repositories')}><Icon name="plus" size={16} /> New scan</button> : null}</div>
+        <header className="topbar"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileNavOpen(true)}><Icon name="menu" size={20} /></button><div className="breadcrumbs"><button className="breadcrumbs-home" onClick={() => setView('landing')}>RepoReady</button><Icon name="chevron-right" size={14} /><strong>{currentMeta.eyebrow.split(' / ')[1]}</strong></div><div className="topbar-actions"><span className="topbar-env"><span className="live-dot" />Development</span><button className="icon-button" aria-label="Notifications" onClick={() => setToast('No new notifications')}><Icon name="bell" size={17} /></button><button className="avatar-button" aria-label="Open profile" onClick={() => setToast('Profile management is not enabled in this local workspace.')}>AK</button></div></header>
+        <main id="main-content" className="main-content">{view !== 'landing' ? <div className="page-heading"><div><span className="eyebrow">{currentMeta.eyebrow}</span><h1>{currentMeta.title}</h1><p>{currentMeta.description}</p></div>{view === 'overview' || view === 'reports' ? <button className="button button--primary page-heading__cta" onClick={() => setView('repositories')}><Icon name="plus" size={16} /> New scan</button> : null}</div> : null}
+          {view === 'landing' ? <LandingPage onStart={() => setView('repositories')} onWorkspace={() => setView('overview')} /> : null}
           {view === 'overview' ? <OverviewPage state={dashboardState} onRetry={() => void loadDashboard()} onRunScan={() => setView('repositories')} onOpenReport={openReport} onExport={scan => void handleExport(scan)} /> : null}
           {view === 'repositories' ? <ImportPage activeScan={activeScan} onStart={startScan} onOpenReport={() => openReport(activeScan?.summary ?? selectedScan)} /> : null}
           {view === 'reports' ? <ReportsPage scan={reportScan} onExport={format => { if (reportScan) void handleExport(reportScan, format) }} onRunScan={() => setView('repositories')} /> : null}
           {view === 'history' ? <HistoryPage state={historyState} onRetry={() => void loadHistory()} onOpen={openReport} onDelete={scan => void handleDelete(scan)} onRerun={scan => void handleRerun(scan)} /> : null}
           {view === 'compare' ? <ComparePage history={history} /> : null}
         </main>
-        <footer className="app-footer"><span>RepoReady <span className="separator">·</span> repository intelligence for teams that ship.</span><span><Icon name="shield" size={13} /> Workspace data stays scoped to your API.</span></footer>
+        <footer className="app-footer"><button className="footer-link" onClick={() => setView('landing')}>RepoReady <span className="separator">·</span> repository intelligence for teams that ship.</button><span><Icon name="shield" size={13} /> Workspace data stays scoped to your API.</span></footer>
       </div>
       {toast ? <div className="toast" role="status"><Icon name="check" size={15} />{toast}<button className="icon-button" onClick={() => setToast(undefined)} aria-label="Dismiss notification"><Icon name="x" size={14} /></button></div> : null}
     </div>

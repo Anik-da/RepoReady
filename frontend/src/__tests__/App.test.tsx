@@ -67,6 +67,18 @@ describe('RepoReady workspace', () => {
     expect(screen.getByLabelText('Repository URL')).toBeInTheDocument()
   })
 
+  it('opens the informational start page without changing live workspace data', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn(() => jsonResponse(dashboard)))
+    render(<App />)
+
+    await screen.findByText('91/100')
+    await user.click(screen.getByRole('button', { name: /open repoready start page/i }))
+    expect(screen.getByRole('heading', { name: /ship the repository you meant to share/i })).toBeInTheDocument()
+    expect(screen.getByText('Sample data')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /analyze a repository/i })).toBeInTheDocument()
+  })
+
   it('shows an honest connection error when the API is unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
     render(<App />)
