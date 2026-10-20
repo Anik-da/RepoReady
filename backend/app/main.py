@@ -163,7 +163,7 @@ def _dashboard(database: Database) -> dict[str, object]:
     critical_count = 0
     high_count = 0
 
-    for bundle in bundles:
+    for bundle in completed:
         findings = bundle.get("findings", [])
         findings = findings if isinstance(findings, list) else []
         total_findings += len(findings)
