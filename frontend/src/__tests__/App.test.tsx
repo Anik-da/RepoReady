@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -67,12 +67,11 @@ describe('RepoReady workspace', () => {
     expect(screen.getByLabelText('Repository URL')).toBeInTheDocument()
   })
 
-  it('shows local fallback content when the API is unreachable', async () => {
+  it('shows an honest connection error when the API is unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
     render(<App />)
 
-    expect(await screen.findByText('Demo surface · API unavailable')).toBeInTheDocument()
-    expect(screen.getByText('86/100')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('Showing local sample content so the workspace remains explorable.')).toBeInTheDocument())
+    expect(await screen.findByRole('alert')).toHaveTextContent('RepoReady API is unavailable')
+    expect(screen.queryByText('86/100')).not.toBeInTheDocument()
   })
 })

@@ -3,8 +3,6 @@ import type { CSSProperties, FormEvent, ReactNode } from 'react'
 import { ErrorState, EmptyState, LoadingState } from './components/StateViews'
 import { Icon, type IconName } from './components/Icon'
 import {
-  ApiRequestError,
-  ApiUnavailableError,
   compareScans,
   exportScan,
   getDashboard,
@@ -13,13 +11,6 @@ import {
   getScanStatus,
   importRepository,
 } from './lib/api'
-import {
-  fallbackComparison,
-  fallbackDashboard,
-  fallbackFindings,
-  fallbackReport,
-  fallbackScan,
-} from './lib/mockData'
 import type {
   ComparisonData,
   DashboardData,
@@ -36,16 +27,15 @@ import './styles.css'
 
 type View = 'overview' | 'repositories' | 'reports' | 'history' | 'compare'
 type QueryState<T> =
-  | { status: 'idle'; data?: undefined; error?: undefined; fallback?: false }
-  | { status: 'loading'; data?: undefined; error?: undefined; fallback?: false }
-  | { status: 'success'; data: T; error?: undefined; fallback?: boolean }
-  | { status: 'error'; data?: undefined; error: string; fallback?: false }
+  | { status: 'idle'; data?: undefined; error?: undefined }
+  | { status: 'loading'; data?: undefined; error?: undefined }
+  | { status: 'success'; data: T; error?: undefined }
+  | { status: 'error'; data?: undefined; error: string }
 
 interface ActiveScan {
   summary: ScanSummary
   progress: number
   status: ScanStatus
-  fallback?: boolean
   error?: string
 }
 
@@ -188,8 +178,8 @@ function OverviewPage({ state, onRetry, onRunScan, onOpenReport, onExport }: { s
       </section>
 
       <div className="notice-row">
-        <span className={`connection-badge ${state.fallback ? 'connection-badge--fallback' : ''}`}><span className="connection-badge__dot" />{state.fallback ? 'Demo surface · API unavailable' : 'API connected'}</span>
-        <span className="notice-copy">{state.fallback ? 'Showing local sample content so the workspace remains explorable.' : `Updated ${formatRelative(data.generatedAt)}`}</span>
+        <span className="connection-badge"><span className="connection-badge__dot" />API connected</span>
+        <span className="notice-copy">{`Updated ${formatRelative(data.generatedAt)}`}</span>
       </div>
 
       <section className="section-block" aria-labelledby="metrics-heading">
@@ -276,8 +266,7 @@ function ReportsPage({ scan, onExport, onRunScan }: { scan?: ScanSummary; onExpo
       if (!cancelled) setReportState({ status: 'success', data: report })
     }).catch(error => {
       if (cancelled) return
-      if (error instanceof ApiUnavailableError) setReportState({ status: 'success', data: { ...fallbackReport, scan }, fallback: true })
-      else setReportState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to load this report.' })
+      setReportState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to load this report.' })
     })
     return () => { cancelled = true }
   }, [scan, reloadKey])
@@ -299,7 +288,7 @@ function ReportsPage({ scan, onExport, onRunScan }: { scan?: ScanSummary; onExpo
       <div className="report-toolbar panel"><div className="report-toolbar__scan"><div className="repo-avatar"><Icon name="repo" size={16} /></div><div><span className="section-label">Report for</span><strong>{report.scan.repository}</strong><span className="subline"><Icon name="git-branch" size={12} />{report.scan.branch ?? 'default'} <span className="separator">·</span> {report.scan.commit ?? 'no commit'}</span></div></div><div className="report-toolbar__actions"><button className="button button--secondary" onClick={() => onExport('json')}><Icon name="download" size={15} /> JSON</button><button className="button button--secondary" onClick={() => onExport('markdown')}><Icon name="download" size={15} /> Markdown</button></div></div>
       <div className="report-summary-grid"><div className="summary-card summary-card--score"><span className="section-label">Health score</span><div className="summary-card__score"><ScoreRing score={report.summary?.score ?? report.scan.score} size="lg" /><div><strong>{report.summary?.score ?? report.scan.score ?? '—'}<small>/100</small></strong><span>{report.summary?.score && report.summary.score >= 90 ? 'Healthy surface' : 'Needs a closer look'}</span></div></div></div><SummaryValue label="Files scanned" value={report.summary?.filesScanned?.toString() ?? '—'} icon="file" /><SummaryValue label="Scan duration" value={report.summary?.duration ?? report.scan.duration ?? '—'} icon="clock" /><SummaryValue label="Coverage" value={report.summary?.coverage ?? '—'} icon="layers" /></div>
       <section className="findings-shell panel" aria-labelledby="findings-heading"><div className="findings-head"><div><span className="section-label">Review queue</span><h3 id="findings-heading">Findings <span>{report.findings.length}</span></h3></div><div className="findings-head__tools"><div className="search-shell"><Icon name="search" size={15} /><input aria-label="Search findings" placeholder="Search findings" value={query} onChange={event => setQuery(event.target.value)} /></div><button className="filter-button" aria-label="Finding filters"><Icon name="filter" size={16} />Filter</button></div></div><div className="severity-tabs" role="tablist" aria-label="Filter findings by severity"><button className={severity === 'all' ? 'severity-tab severity-tab--active' : 'severity-tab'} onClick={() => setSeverity('all')} role="tab" aria-selected={severity === 'all'}>All <span>{report.findings.length}</span></button>{(['critical', 'high', 'medium', 'low'] as Severity[]).filter(level => availableSeverities.includes(level)).map(level => <button key={level} className={`severity-tab severity-tab--${level} ${severity === level ? 'severity-tab--active' : ''}`} onClick={() => setSeverity(level)} role="tab" aria-selected={severity === level}>{severityLabel(level)} <span>{counts[level]}</span></button>)}</div>{report.findings.length === 0 ? <EmptyState icon="shield" title="No findings returned" body="The API returned a report with no findings. RepoReady keeps that result intact." action={<button className="button button--secondary" onClick={onRunScan}>Run another scan <Icon name="plus" size={15} /></button>} /> : <div className="findings-grid"><div className="finding-list">{filteredFindings.length ? filteredFindings.map(finding => <FindingRow key={finding.id} finding={finding} active={activeFinding?.id === finding.id} onClick={() => setSelectedFinding(finding.id)} />) : <EmptyState icon="search" title="No findings match" body="Try a different severity or search term." />}</div><FindingDetail finding={activeFinding} /></div>}</section>
-      <div className="report-footnote"><Icon name="spark" size={14} /><span>{reportState.fallback ? 'Local sample report · connect the API to review live repository findings.' : 'Finding details are sourced from the connected scan API.'}</span></div>
+      <div className="report-footnote"><Icon name="spark" size={14} /><span>Finding details are sourced from the connected scan API.</span></div>
     </>
   )
 }
@@ -320,7 +309,7 @@ function FindingDetail({ finding }: { finding?: Finding }) {
 function HistoryPage({ state, onRetry, onOpen }: { state: QueryState<ScanSummary[]>; onRetry: () => void; onOpen: (scan: ScanSummary) => void }) {
   if (state.status !== 'success') return state.status === 'loading' ? <LoadingState label="Loading scan history" /> : <ErrorState title="History unavailable" body={state.status === 'error' ? state.error : 'History is waiting for data.'} onRetry={onRetry} />
   const scans = state.data
-  return <section className="panel history-panel"><div className="history-heading"><div><span className="section-label">Audit trail</span><h3>Scan history <span>{scans.length}</span></h3></div><div className="history-heading__meta"><span className={`connection-badge ${state.fallback ? 'connection-badge--fallback' : ''}`}><span className="connection-badge__dot" />{state.fallback ? 'Local fallback' : 'Live history'}</span></div></div>{scans.length ? <div className="history-table"><div className="history-table__head"><span>Repository</span><span>Commit</span><span>Score</span><span>Findings</span><span>Status</span><span>Run date</span><span /></div>{scans.map(scan => <button key={scan.id} className="history-table__row" onClick={() => onOpen(scan)}><span className="history-repo"><span className="repo-avatar repo-avatar--muted"><Icon name="repo" size={15} /></span><strong>{scan.repository}</strong></span><span className="mono">{scan.commit ?? '—'}</span><span><ScoreRing score={scan.score} size="sm" /></span><span>{scan.findings ?? '—'} <small>{scan.critical ? `· ${scan.critical} critical` : ''}</small></span><span><StatusPill status={scan.status} /></span><span>{formatDate(scan.completedAt ?? scan.startedAt)}</span><Icon name="chevron-right" size={16} /></button>)}</div> : <EmptyState icon="history" title="No scan history" body="Completed and failed scans will collect here once the API returns them." />}</section>
+  return <section className="panel history-panel"><div className="history-heading"><div><span className="section-label">Audit trail</span><h3>Scan history <span>{scans.length}</span></h3></div><div className="history-heading__meta"><span className="connection-badge"><span className="connection-badge__dot" />Live history</span></div></div>{scans.length ? <div className="history-table"><div className="history-table__head"><span>Repository</span><span>Commit</span><span>Score</span><span>Findings</span><span>Status</span><span>Run date</span><span /></div>{scans.map(scan => <button key={scan.id} className="history-table__row" onClick={() => onOpen(scan)}><span className="history-repo"><span className="repo-avatar repo-avatar--muted"><Icon name="repo" size={15} /></span><strong>{scan.repository}</strong></span><span className="mono">{scan.commit ?? '—'}</span><span><ScoreRing score={scan.score} size="sm" /></span><span>{scan.findings ?? '—'} <small>{scan.critical ? `· ${scan.critical} critical` : ''}</small></span><span><StatusPill status={scan.status} /></span><span>{formatDate(scan.completedAt ?? scan.startedAt)}</span><Icon name="chevron-right" size={16} /></button>)}</div> : <EmptyState icon="history" title="No scan history" body="Completed and failed scans will collect here once the API returns them." />}</section>
 }
 
 function ComparePage({ history }: { history: ScanSummary[] }) {
@@ -342,11 +331,7 @@ function ComparePage({ history }: { history: ScanSummary[] }) {
     try {
       setState({ status: 'success', data: await compareScans(baselineId, currentId) })
     } catch (error) {
-      if (error instanceof ApiUnavailableError) {
-        const baseline = history.find(scan => scan.id === baselineId) ?? fallbackComparison.baseline
-        const current = history.find(scan => scan.id === currentId) ?? fallbackComparison.current
-        setState({ status: 'success', data: { ...fallbackComparison, baseline, current }, fallback: true })
-      } else setState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to compare scans.' })
+      setState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to compare scans.' })
     }
   }
 
@@ -361,7 +346,7 @@ function ComparePage({ history }: { history: ScanSummary[] }) {
 
 function ComparisonResult({ state }: { state: Extract<QueryState<ComparisonData>, { status: 'success' }> }) {
   const comparison = state.data
-  return <><div className="compare-banner"><div><span className="section-label">Comparing</span><strong>{comparison.baseline.repository}</strong><span>{comparison.baseline.commit ?? 'baseline'} <Icon name="arrow-up-right" size={13} /> {comparison.current.commit ?? 'current'}</span></div><span className={`connection-badge ${state.fallback ? 'connection-badge--fallback' : ''}`}><span className="connection-badge__dot" />{state.fallback ? 'Local fallback' : 'Live comparison'}</span></div><div className="comparison-summary"><div className="comparison-score"><span className="section-label">Health movement</span><div><ScoreRing score={comparison.baseline.score} size="md" /><Icon name="arrow-up-right" size={17} /><ScoreRing score={comparison.current.score} size="md" /></div><strong className={comparison.scoreDelta !== undefined && comparison.scoreDelta >= 0 ? 'delta-positive' : 'delta-negative'}>{comparison.scoreDelta === undefined ? '—' : `${comparison.scoreDelta > 0 ? '+' : ''}${comparison.scoreDelta} pts`}</strong></div><div className="delta-card"><span className="section-label">Finding movement</span><strong>{comparison.findingDelta === undefined ? '—' : `${comparison.findingDelta > 0 ? '+' : ''}${comparison.findingDelta}`}</strong><span>{comparison.findingDelta && comparison.findingDelta > 0 ? 'more findings in current' : 'fewer findings in current'}</span></div><div className="delta-card"><span className="section-label">Resolved</span><strong className="delta-positive">{comparison.resolved.length}</strong><span>findings closed</span></div><div className="delta-card"><span className="section-label">Introduced</span><strong className="delta-negative">{comparison.introduced.length}</strong><span>new findings</span></div></div><div className="comparison-columns"><ComparisonColumn title="Resolved" tone="positive" findings={comparison.resolved} /><ComparisonColumn title="Introduced" tone="negative" findings={comparison.introduced} /><ComparisonColumn title="Unchanged" tone="neutral" findings={comparison.unchanged} /></div></>
+  return <><div className="compare-banner"><div><span className="section-label">Comparing</span><strong>{comparison.baseline.repository}</strong><span>{comparison.baseline.commit ?? 'baseline'} <Icon name="arrow-up-right" size={13} /> {comparison.current.commit ?? 'current'}</span></div><span className="connection-badge"><span className="connection-badge__dot" />Live comparison</span></div><div className="comparison-summary"><div className="comparison-score"><span className="section-label">Health movement</span><div><ScoreRing score={comparison.baseline.score} size="md" /><Icon name="arrow-up-right" size={17} /><ScoreRing score={comparison.current.score} size="md" /></div><strong className={comparison.scoreDelta !== undefined && comparison.scoreDelta >= 0 ? 'delta-positive' : 'delta-negative'}>{comparison.scoreDelta === undefined ? '—' : `${comparison.scoreDelta > 0 ? '+' : ''}${comparison.scoreDelta} pts`}</strong></div><div className="delta-card"><span className="section-label">Finding movement</span><strong>{comparison.findingDelta === undefined ? '—' : `${comparison.findingDelta > 0 ? '+' : ''}${comparison.findingDelta}`}</strong><span>{comparison.findingDelta && comparison.findingDelta > 0 ? 'more findings in current' : 'fewer findings in current'}</span></div><div className="delta-card"><span className="section-label">Resolved</span><strong className="delta-positive">{comparison.resolved.length}</strong><span>findings closed</span></div><div className="delta-card"><span className="section-label">Introduced</span><strong className="delta-negative">{comparison.introduced.length}</strong><span>new findings</span></div></div><div className="comparison-columns"><ComparisonColumn title="Resolved" tone="positive" findings={comparison.resolved} /><ComparisonColumn title="Introduced" tone="negative" findings={comparison.introduced} /><ComparisonColumn title="Unchanged" tone="neutral" findings={comparison.unchanged} /></div></>
 }
 
 function ComparisonColumn({ title, tone, findings }: { title: string; tone: 'positive' | 'negative' | 'neutral'; findings: Finding[] }) {
@@ -384,8 +369,7 @@ export default function App() {
       setDashboardState({ status: 'success', data })
       if (!selectedScan && data.recentScans.length) setSelectedScan(data.recentScans[0])
     } catch (error) {
-      if (error instanceof ApiUnavailableError) setDashboardState({ status: 'success', data: fallbackDashboard, fallback: true })
-      else setDashboardState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to load the repository overview.' })
+      setDashboardState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to load the repository overview.' })
     }
   }
 
@@ -394,8 +378,7 @@ export default function App() {
     try {
       setHistoryState({ status: 'success', data: await getHistory() })
     } catch (error) {
-      if (error instanceof ApiUnavailableError) setHistoryState({ status: 'success', data: fallbackDashboard.recentScans, fallback: true })
-      else setHistoryState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to load scan history.' })
+      setHistoryState({ status: 'error', error: error instanceof Error ? error.message : 'Unable to load scan history.' })
     }
   }
 
@@ -406,16 +389,6 @@ export default function App() {
     if (scan) setSelectedScan(scan)
     setView('reports')
     setMobileNavOpen(false)
-  }
-
-  const simulateLocalScan = async (summary: ScanSummary) => {
-    const steps = [22, 44, 68, 86, 100]
-    for (const progress of steps) {
-      await new Promise(resolve => window.setTimeout(resolve, 350))
-      setActiveScan({ summary: { ...summary, status: progress === 100 ? 'complete' : 'running', progress }, progress, status: progress === 100 ? 'complete' : 'running', fallback: true })
-    }
-    setSelectedScan({ ...summary, status: 'complete', progress: 100 })
-    void loadDashboard()
   }
 
   const watchRemoteScan = async (summary: ScanSummary) => {
@@ -439,17 +412,10 @@ export default function App() {
     try {
       const scan = await importRepository(input)
       setSelectedScan(scan)
-      if (scan.id.startsWith('local-')) await simulateLocalScan(scan)
-      else if (scan.status === 'complete') setActiveScan({ summary: scan, progress: 100, status: 'complete' })
+      if (scan.status === 'complete') setActiveScan({ summary: scan, progress: 100, status: 'complete' })
       else await watchRemoteScan(scan)
     } catch (error) {
-      if (error instanceof ApiUnavailableError) {
-        const local: ScanSummary = { ...fallbackScan, id: `local-${Date.now()}`, repository: label || fallbackScan.repository, branch: input.branch ?? fallbackScan.branch, status: 'queued', startedAt: new Date().toISOString(), completedAt: undefined, source: input.source === 'git' ? 'Git URL' : 'ZIP upload', progress: 4 }
-        setSelectedScan(local)
-        await simulateLocalScan(local)
-      } else {
-        setActiveScan({ summary: pending, progress: 4, status: 'failed', error: error instanceof Error ? error.message : 'Unable to start this scan.' })
-      }
+      setActiveScan({ summary: pending, progress: 4, status: 'failed', error: error instanceof Error ? error.message : 'Unable to start this scan.' })
     }
   }
 
@@ -470,11 +436,7 @@ export default function App() {
       download(blob, `${scan.repository.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${scan.id}.${format}`)
       setToast(`Exported ${format.toUpperCase()} report`)
     } catch (error) {
-      if (error instanceof ApiUnavailableError) {
-        const payload = format === 'markdown' ? `# ${scan.repository}\n\n- Scan: \`${scan.id}\`\n- Status: ${scan.status}\n- Score: ${scan.score ?? '—'}\n- Findings: ${scan.findings ?? '—'}\n` : JSON.stringify({ scan }, null, 2)
-        download(new Blob([payload], { type: format === 'markdown' ? 'text/markdown' : 'application/json' }), `${scan.id}.${format}`)
-        setToast('Exported local fallback report')
-      } else setToast(error instanceof Error ? error.message : 'Export failed')
+      setToast(error instanceof Error ? error.message : 'Export failed')
       window.setTimeout(() => setToast(undefined), 3200)
     }
   }
@@ -491,7 +453,7 @@ export default function App() {
         <div className="workspace-switcher"><span className="workspace-avatar">A</span><span><strong>Acme engineering</strong><small>Personal workspace</small></span><Icon name="chevron-down" size={15} /></div>
         <nav className="primary-nav" aria-label="Primary navigation">{navItems.map(item => <button key={item.id} className={`nav-item ${view === item.id ? 'nav-item--active' : ''}`} onClick={() => { setView(item.id); setMobileNavOpen(false) }}><Icon name={item.icon} size={17} /><span>{item.label}</span><kbd>{item.shortcut}</kbd></button>)}</nav>
         <div className="sidebar-section"><span className="sidebar-section__label">Workspace</span><button className="sidebar-link" onClick={() => { setView('repositories'); setMobileNavOpen(false) }}><Icon name="plus" size={15} />Add repository</button><button className="sidebar-link" onClick={() => setToast('Keyboard shortcuts are coming soon.')}><Icon name="terminal" size={15} />Command palette <kbd>⌘K</kbd></button></div>
-        <div className="sidebar-bottom"><div className="api-status"><span className="api-status__dot" /><div><strong>API status</strong><span>{dashboardState.fallback ? 'Offline / local mode' : 'Ready to connect'}</span></div><button className="icon-button" aria-label="Refresh API status" onClick={() => void loadDashboard()}><Icon name="refresh" size={15} /></button></div><button className="sidebar-link"><Icon name="settings" size={15} />Settings</button><button className="profile-row"><span className="profile-avatar">AK</span><span><strong>Alex Kim</strong><small>Developer</small></span><Icon name="chevron-right" size={15} /></button></div>
+        <div className="sidebar-bottom"><div className="api-status"><span className="api-status__dot" /><div><strong>API status</strong><span>{dashboardState.status === 'error' ? 'Unavailable' : dashboardState.status === 'loading' ? 'Checking…' : 'Connected'}</span></div><button className="icon-button" aria-label="Refresh API status" onClick={() => void loadDashboard()}><Icon name="refresh" size={15} /></button></div><button className="sidebar-link" onClick={() => setToast('Settings are managed through the API environment.') }><Icon name="settings" size={15} />Settings</button><button className="profile-row" onClick={() => setToast('Profile management is not enabled in this local workspace.') }><span className="profile-avatar">AK</span><span><strong>Alex Kim</strong><small>Developer</small></span><Icon name="chevron-right" size={15} /></button></div>
       </aside>
       {mobileNavOpen ? <button className="sidebar-overlay" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} /> : null}
       <div className="main-shell">

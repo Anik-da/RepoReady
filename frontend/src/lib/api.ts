@@ -38,13 +38,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    if (response.status === 404 || response.status === 502 || response.status === 503 || response.status === 504) {
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
       throw new ApiUnavailableError(`RepoReady API returned ${response.status}.`, response.status)
     }
     let message = `RepoReady API returned ${response.status}.`
     try {
-      const body = await response.json() as { message?: string }
-      if (body.message) message = body.message
+      const body = await response.json() as { message?: string; detail?: string }
+      if (body.message || body.detail) message = body.message ?? body.detail ?? message
     } catch {
       // Keep the status-based message when the server does not return JSON.
     }
@@ -245,7 +245,7 @@ export async function exportScan(scanId: string, format: 'json' | 'markdown' = '
     throw new ApiUnavailableError()
   }
   if (!response.ok) {
-    if ([404, 502, 503, 504].includes(response.status)) throw new ApiUnavailableError(undefined, response.status)
+    if ([502, 503, 504].includes(response.status)) throw new ApiUnavailableError(undefined, response.status)
     throw new ApiRequestError(`Export failed with status ${response.status}.`, response.status)
   }
   return await response.blob()
