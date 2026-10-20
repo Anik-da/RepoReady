@@ -89,6 +89,45 @@ class Database:
     def initialize(self) -> None:
         with closing(self.connect()) as connection:
             connection.executescript(SCHEMA)
+            table = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'findings'"
+            ).fetchone()
+            table_sql = str(table[0]) if table and table[0] else ""
+            if "'critical'" not in table_sql:
+                connection.execute("PRAGMA foreign_keys = OFF")
+                connection.execute("DROP INDEX IF EXISTS idx_findings_scan_order")
+                connection.execute("ALTER TABLE findings RENAME TO findings_legacy")
+                connection.execute(
+                    """
+                    CREATE TABLE findings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scan_id TEXT NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
+                        code TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),
+                        title TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        remediation TEXT,
+                        evidence_json TEXT NOT NULL DEFAULT '[]',
+                        sort_order INTEGER NOT NULL DEFAULT 0,
+                        UNIQUE(scan_id, code)
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO findings (
+                        id, scan_id, code, category, severity, title,
+                        description, remediation, evidence_json, sort_order
+                    )
+                    SELECT id, scan_id, code, category, severity, title,
+                           description, remediation, evidence_json, sort_order
+                    FROM findings_legacy
+                    """
+                )
+                connection.execute("DROP TABLE findings_legacy")
+                connection.execute("CREATE INDEX idx_findings_scan_order ON findings(scan_id, sort_order, id)")
+                connection.execute("PRAGMA foreign_keys = ON")
 
     def health(self) -> bool:
         with closing(self.connect()) as connection:

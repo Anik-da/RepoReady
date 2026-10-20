@@ -132,6 +132,9 @@ function normalizeReport(payload: BackendScan): ScanReport {
   const filesScanned = typeof summary.file_count === 'number' ? summary.file_count : undefined
   const score = typeof summary.score === 'number' ? summary.score : scan.score
   const findingCount = backendFindings.length || (findingCounts ? Object.values(findingCounts).reduce<number>((total, value) => total + (typeof value === 'number' ? value : 0), 0) : undefined)
+  const checks = summary.checks as Record<string, unknown> | undefined
+  const execution = summary.execution as Record<string, unknown> | undefined
+  const categoryScores = summary.category_scores as Record<string, number> | undefined
   return {
     scan: { ...scan, findings: findingCount },
     findings: backendFindings.map((finding, index) => normalizeFinding(finding, scan.id, index)),
@@ -140,6 +143,18 @@ function normalizeReport(payload: BackendScan): ScanReport {
       filesScanned,
       duration: scan.duration,
       coverage: undefined,
+      checks: checks ? {
+        passed: Number(checks.passed ?? 0),
+        warnings: Number(checks.warnings ?? 0),
+        failed: Number(checks.failed ?? 0),
+        notRun: Number(checks.not_run ?? 0),
+      } : undefined,
+      execution: execution ? {
+        tests: typeof execution.tests === 'string' ? execution.tests : undefined,
+        dockerBuild: typeof execution.docker_build === 'string' ? execution.docker_build : undefined,
+      } : undefined,
+      limitations: Array.isArray(summary.limitations) ? summary.limitations.filter((value): value is string => typeof value === 'string') : undefined,
+      categoryScores,
     },
   }
 }

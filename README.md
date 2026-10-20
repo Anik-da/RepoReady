@@ -148,6 +148,8 @@ directly. The core operations are:
 | GET | `/scans/{id}` | Full persisted report |
 | GET | `/scans/{id}/findings` | Findings for one report |
 | GET | `/scans/compare?base_id=&candidate_id=` | Finding and score comparison |
+| POST | `/scans/{id}/rerun` | Re-clone and rescan a Git source |
+| DELETE | `/scans/{id}` | Delete a saved scan |
 | GET | `/scans/{id}/export/json` | JSON report download |
 | GET | `/scans/{id}/export/markdown` | Markdown report download |
 

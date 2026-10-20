@@ -49,6 +49,8 @@ docker run --rm -p 8000:8000 -v "$PWD/data:/app/data" repoready-backend
 - `GET /scans`
 - `GET /scans/{scan_id}`
 - `GET /scans/{scan_id}/findings`
+- `POST /scans/{scan_id}/rerun` (Git sources only)
+- `DELETE /scans/{scan_id}`
 - `GET /scans/compare?base_id=...&candidate_id=...`
 - `GET /scans/{scan_id}/export/json`
 - `GET /scans/{scan_id}/export/markdown`

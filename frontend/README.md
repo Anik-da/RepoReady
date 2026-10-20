@@ -61,4 +61,4 @@ The client keeps the API boundary in `src/lib/api.ts` and currently expects:
 - `GET /scans/:id/export/json`
 - `GET /scans/:id/export/markdown`
 
-Network errors and unavailable gateway responses show a clearly labelled local fallback surface. A successful API response with empty arrays remains empty in the UI; the client does not invent metrics for that response.
+Network errors and unavailable gateway responses show a recoverable error state. A successful API response with empty arrays remains empty in the UI; the client does not invent metrics or reports when the API is unavailable.

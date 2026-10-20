@@ -66,6 +66,18 @@ export interface ScanReport {
     filesScanned?: number
     duration?: string
     coverage?: string
+    checks?: {
+      passed: number
+      warnings: number
+      failed: number
+      notRun: number
+    }
+    execution?: {
+      tests?: string
+      dockerBuild?: string
+    }
+    limitations?: string[]
+    categoryScores?: Record<string, number>
   }
 }
 
