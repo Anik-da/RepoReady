@@ -310,6 +310,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             database.fail_scan(scan_id=scan_id, error=str(exc))
             raise HTTPException(status_code=500, detail="Repository scan failed") from exc
 
+    @app.post("/scans/{scan_id}/rerun", status_code=status.HTTP_201_CREATED)
+    def rerun_scan(scan_id: str) -> dict[str, object]:
+        previous = database.get_bundle(scan_id)
+        if previous is None:
+            raise _not_found(scan_id)
+        if previous.get("source_type") != "git" or not previous.get("source_url"):
+            raise HTTPException(
+                status_code=409,
+                detail="Uploaded scans cannot be rerun because repository contents are not retained; upload the ZIP again",
+            )
+        new_id: str | None = None
+        try:
+            safe_url = validate_public_https_git_url(str(previous["source_url"]))
+            new_id = start_scan(
+                database,
+                source_type="git",
+                source_name=str(previous.get("source_name", "repository")),
+                source_url=safe_url,
+            )
+            with tempfile.TemporaryDirectory(prefix="repoready-rerun-") as temporary_directory:
+                repository_root = Path(temporary_directory) / "repository"
+                clone_public_git_repository(
+                    safe_url,
+                    repository_root,
+                    ref=None,
+                    timeout_seconds=settings.git_timeout_seconds,
+                )
+                enforce_repository_size_limits(
+                    repository_root,
+                    max_bytes=settings.git_max_repository_bytes,
+                    max_files=settings.max_scan_files,
+                )
+                return finish_scan(database, settings, new_id, repository_root)
+        except GitValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except GitCloneError as exc:
+            if new_id:
+                database.fail_scan(scan_id=new_id, error=str(exc))
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            if new_id:
+                database.fail_scan(scan_id=new_id, error=str(exc))
+            raise HTTPException(status_code=500, detail="Repository rerun failed") from exc
+
     @app.post("/scans/git", status_code=status.HTTP_201_CREATED)
     def scan_git(request: GitScanRequest) -> dict[str, object]:
         try:
@@ -375,6 +419,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if bundle is None:
             raise _not_found(scan_id)
         return bundle
+
+    @app.delete("/scans/{scan_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_scan(scan_id: str) -> Response:
+        if not database.delete_scan(scan_id):
+            raise _not_found(scan_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/scans/{scan_id}/findings")
     def get_findings(scan_id: str) -> dict[str, object]:

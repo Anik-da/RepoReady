@@ -133,7 +133,7 @@ def test_git_scan_uses_guarded_clone_and_persists_result(
 ):
     def fake_clone(url: str, destination: Path, *, ref: str | None, timeout_seconds: int):
         assert url == "https://example.com/repo.git"
-        assert ref == "main"
+        assert ref in {"main", None}
         assert timeout_seconds == 5
         shutil.copytree(fixture_root / "minimal_repo", destination)
 
@@ -145,6 +145,22 @@ def test_git_scan_uses_guarded_clone_and_persists_result(
     assert response.status_code == 201, response.text
     assert response.json()["source_type"] == "git"
     assert response.json()["status"] == "complete"
+
+    rerun = client.post(f"/scans/{response.json()['id']}/rerun")
+    assert rerun.status_code == 201, rerun.text
+    assert rerun.json()["id"] != response.json()["id"]
+
+    deleted = client.delete(f"/scans/{response.json()['id']}")
+    assert deleted.status_code == 204
+    assert client.get(f"/scans/{response.json()['id']}").status_code == 404
+
+
+def test_uploaded_scan_cannot_be_rerun_without_retaining_repository_contents(client, fixture_root: Path):
+    response = _upload(client, fixture_root / "minimal_repo")
+    assert response.status_code == 201
+    rerun = client.post(f"/scans/{response.json()['id']}/rerun")
+    assert rerun.status_code == 409
+    assert "upload the ZIP again" in rerun.json()["detail"]
 
 
 def test_missing_scan_returns_404(client):

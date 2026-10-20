@@ -188,14 +188,29 @@ class Database:
             rows = connection.execute(
                 """
                 SELECT id, source_type, source_name, source_url, created_at,
-                       completed_at, status, score, grade, repository_fingerprint, error
+                       completed_at, status, score, grade, summary_json,
+                       repository_fingerprint, error,
+                       (SELECT COUNT(*) FROM findings f WHERE f.scan_id = scans.id) AS findings_count
                 FROM scans
                 ORDER BY created_at DESC, id DESC
                 LIMIT ? OFFSET ?
                 """,
                 (limit, offset),
             ).fetchall()
-        return [dict(row) for row in rows]
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            summary = _json_loads(item.pop("summary_json", "{}"), {})
+            counts = summary.get("finding_counts", {}) if isinstance(summary, dict) else {}
+            item["findings"] = item.pop("findings_count", 0)
+            item["critical"] = counts.get("critical", 0) if isinstance(counts, dict) else 0
+            items.append(item)
+        return items
+
+    def delete_scan(self, scan_id: str) -> bool:
+        with closing(self.connect()) as connection:
+            cursor = connection.execute("DELETE FROM scans WHERE id = ?", (scan_id,))
+            return cursor.rowcount > 0
 
     def list_findings(self, scan_id: str) -> list[dict[str, Any]]:
         with closing(self.connect()) as connection:

@@ -4,12 +4,14 @@ import { ErrorState, EmptyState, LoadingState } from './components/StateViews'
 import { Icon, type IconName } from './components/Icon'
 import {
   compareScans,
+  deleteScan,
   exportScan,
   getDashboard,
   getHistory,
   getScanReport,
   getScanStatus,
   importRepository,
+  rerunScan,
 } from './lib/api'
 import type {
   ComparisonData,
@@ -306,10 +308,10 @@ function FindingDetail({ finding }: { finding?: Finding }) {
   return <aside className="finding-detail"><div className="finding-detail__top"><span className={`severity-tag severity-tag--${finding.severity}`}>{severityLabel(finding.severity)}</span><span className="finding-detail__id">{finding.id}</span></div><h3>{finding.title}</h3><p>{finding.description}</p><div className="detail-location"><Icon name="file" size={15} /><span>{finding.file}</span>{finding.line ? <span className="line-number">Line {finding.line}</span> : null}</div>{finding.snippet ? <pre><code>{finding.snippet}</code></pre> : null}<div className="recommendation"><span className="recommendation__icon"><Icon name="spark" size={15} /></span><div><span className="section-label">Suggested next step</span><p>{finding.recommendation ?? 'Review this finding against your repository conventions.'}</p></div></div><div className="detail-meta"><span><strong>Rule</strong>{finding.rule}</span><span><strong>Category</strong>{finding.category}</span></div></aside>
 }
 
-function HistoryPage({ state, onRetry, onOpen }: { state: QueryState<ScanSummary[]>; onRetry: () => void; onOpen: (scan: ScanSummary) => void }) {
+function HistoryPage({ state, onRetry, onOpen, onDelete, onRerun }: { state: QueryState<ScanSummary[]>; onRetry: () => void; onOpen: (scan: ScanSummary) => void; onDelete: (scan: ScanSummary) => void; onRerun: (scan: ScanSummary) => void }) {
   if (state.status !== 'success') return state.status === 'loading' ? <LoadingState label="Loading scan history" /> : <ErrorState title="History unavailable" body={state.status === 'error' ? state.error : 'History is waiting for data.'} onRetry={onRetry} />
   const scans = state.data
-  return <section className="panel history-panel"><div className="history-heading"><div><span className="section-label">Audit trail</span><h3>Scan history <span>{scans.length}</span></h3></div><div className="history-heading__meta"><span className="connection-badge"><span className="connection-badge__dot" />Live history</span></div></div>{scans.length ? <div className="history-table"><div className="history-table__head"><span>Repository</span><span>Commit</span><span>Score</span><span>Findings</span><span>Status</span><span>Run date</span><span /></div>{scans.map(scan => <button key={scan.id} className="history-table__row" onClick={() => onOpen(scan)}><span className="history-repo"><span className="repo-avatar repo-avatar--muted"><Icon name="repo" size={15} /></span><strong>{scan.repository}</strong></span><span className="mono">{scan.commit ?? '—'}</span><span><ScoreRing score={scan.score} size="sm" /></span><span>{scan.findings ?? '—'} <small>{scan.critical ? `· ${scan.critical} critical` : ''}</small></span><span><StatusPill status={scan.status} /></span><span>{formatDate(scan.completedAt ?? scan.startedAt)}</span><Icon name="chevron-right" size={16} /></button>)}</div> : <EmptyState icon="history" title="No scan history" body="Completed and failed scans will collect here once the API returns them." />}</section>
+  return <section className="panel history-panel"><div className="history-heading"><div><span className="section-label">Audit trail</span><h3>Scan history <span>{scans.length}</span></h3></div><div className="history-heading__meta"><span className="connection-badge"><span className="connection-badge__dot" />Live history</span></div></div>{scans.length ? <div className="history-table"><div className="history-table__head"><span>Repository</span><span>Commit</span><span>Score</span><span>Findings</span><span>Status</span><span>Run date</span><span>Actions</span></div>{scans.map(scan => <div key={scan.id} className="history-table__row"><button className="history-row-main" onClick={() => onOpen(scan)}><span className="history-repo"><span className="repo-avatar repo-avatar--muted"><Icon name="repo" size={15} /></span><strong>{scan.repository}</strong></span><span className="mono">{scan.commit ?? '—'}</span><span><ScoreRing score={scan.score} size="sm" /></span><span>{scan.findings ?? '—'} <small>{scan.critical ? `· ${scan.critical} critical` : ''}</small></span><span><StatusPill status={scan.status} /></span><span>{formatDate(scan.completedAt ?? scan.startedAt)}</span><span><Icon name="chevron-right" size={16} /></span></button><span className="history-row-actions">{scan.source?.toLowerCase() === 'git' ? <button className="icon-button" aria-label={`Rerun ${scan.repository}`} onClick={() => onRerun(scan)}><Icon name="refresh" size={15} /></button> : null}<button className="icon-button icon-button--danger" aria-label={`Delete ${scan.repository} scan`} onClick={() => onDelete(scan)}><Icon name="x" size={15} /></button></span></div>)}</div> : <EmptyState icon="history" title="No scan history" body="Completed and failed scans will collect here once the API returns them." />}</section>
 }
 
 function ComparePage({ history }: { history: ScanSummary[] }) {
@@ -441,6 +443,32 @@ export default function App() {
     }
   }
 
+  const handleDelete = async (scan: ScanSummary) => {
+    if (!window.confirm(`Delete the saved scan for ${scan.repository}?`)) return
+    try {
+      await deleteScan(scan.id)
+      if (selectedScan?.id === scan.id) setSelectedScan(undefined)
+      await Promise.all([loadHistory(), loadDashboard()])
+      setToast('Saved scan deleted')
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : 'Unable to delete this scan')
+    }
+    window.setTimeout(() => setToast(undefined), 3200)
+  }
+
+  const handleRerun = async (scan: ScanSummary) => {
+    setActiveScan({ summary: { ...scan, status: 'queued', progress: 4 }, progress: 4, status: 'queued' })
+    try {
+      const rerun = await rerunScan(scan.id)
+      setSelectedScan(rerun)
+      setActiveScan({ summary: rerun, progress: rerun.status === 'complete' ? 100 : rerun.progress ?? 0, status: rerun.status })
+      setView('reports')
+      await Promise.all([loadHistory(), loadDashboard()])
+    } catch (error) {
+      setActiveScan({ summary: scan, progress: 4, status: 'failed', error: error instanceof Error ? error.message : 'Unable to rerun this scan.' })
+    }
+  }
+
   const currentMeta = viewMeta[view]
   const history = historyState.status === 'success' ? historyState.data : []
   const reportScan = selectedScan ?? (dashboardState.status === 'success' ? dashboardState.data.recentScans[0] : undefined)
@@ -462,7 +490,7 @@ export default function App() {
           {view === 'overview' ? <OverviewPage state={dashboardState} onRetry={() => void loadDashboard()} onRunScan={() => setView('repositories')} onOpenReport={openReport} onExport={scan => void handleExport(scan)} /> : null}
           {view === 'repositories' ? <ImportPage activeScan={activeScan} onStart={startScan} onOpenReport={() => openReport(activeScan?.summary ?? selectedScan)} /> : null}
           {view === 'reports' ? <ReportsPage scan={reportScan} onExport={format => { if (reportScan) void handleExport(reportScan, format) }} onRunScan={() => setView('repositories')} /> : null}
-          {view === 'history' ? <HistoryPage state={historyState} onRetry={() => void loadHistory()} onOpen={openReport} /> : null}
+          {view === 'history' ? <HistoryPage state={historyState} onRetry={() => void loadHistory()} onOpen={openReport} onDelete={scan => void handleDelete(scan)} onRerun={scan => void handleRerun(scan)} /> : null}
           {view === 'compare' ? <ComparePage history={history} /> : null}
         </main>
         <footer className="app-footer"><span>RepoReady <span className="separator">·</span> repository intelligence for teams that ship.</span><span><Icon name="shield" size={13} /> Workspace data stays scoped to your API.</span></footer>

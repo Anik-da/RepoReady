@@ -211,6 +211,14 @@ export async function getScanReport(scanId: string): Promise<ScanReport> {
   return normalizeReport(await request<BackendScan>(`/scans/${encodeURIComponent(scanId)}`))
 }
 
+export async function deleteScan(scanId: string): Promise<void> {
+  await request<void>(`/scans/${encodeURIComponent(scanId)}`, { method: 'DELETE' })
+}
+
+export async function rerunScan(scanId: string): Promise<ScanSummary> {
+  return normalizeScan(await request<BackendScan>(`/scans/${encodeURIComponent(scanId)}/rerun`, { method: 'POST' }))
+}
+
 export async function compareScans(baselineId: string, currentId: string): Promise<ComparisonData> {
   const [payload, baselinePayload, currentPayload] = await Promise.all([
     request<Record<string, unknown>>(`/scans/compare?base_id=${encodeURIComponent(baselineId)}&candidate_id=${encodeURIComponent(currentId)}`),
