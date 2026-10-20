@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS findings (
     scan_id TEXT NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
     code TEXT NOT NULL,
     category TEXT NOT NULL,
-    severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high')),
+    severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high', 'critical')),
     title TEXT NOT NULL,
     description TEXT NOT NULL,
     remediation TEXT,

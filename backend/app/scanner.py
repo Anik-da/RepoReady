@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -16,6 +18,14 @@ CATEGORY_WEIGHTS = {
     "tests": 25,
     "docker": 15,
     "documentation": 20,
+}
+
+SEVERITY_PENALTIES = {
+    "critical": 45,
+    "high": 30,
+    "medium": 15,
+    "low": 5,
+    "info": 0,
 }
 
 IGNORED_DIRECTORY_NAMES = {
@@ -187,8 +197,22 @@ class ScanReport:
             "grade": self.grade,
             "finding_counts": {
                 severity: sum(1 for finding in self.findings if finding.severity == severity)
-                for severity in ("info", "low", "medium", "high")
+                for severity in ("info", "low", "medium", "high", "critical")
             },
+            "checks": {
+                "passed": sum(1 for finding in self.findings if finding.severity == "info"),
+                "warnings": sum(1 for finding in self.findings if finding.severity in {"low", "medium"}),
+                "failed": sum(1 for finding in self.findings if finding.severity in {"high", "critical"}),
+                "not_run": 2,
+            },
+            "execution": {
+                "tests": "not_run",
+                "docker_build": "not_run",
+            },
+            "limitations": [
+                "Static analysis does not execute repository tests or build scripts.",
+                "Heuristic findings should be reviewed against project-specific conventions.",
+            ],
         }
 
 
@@ -300,6 +324,319 @@ def _category_finding(
         remediation=remediation,
         evidence=tuple(evidence),
     )
+
+
+def _line_number(text: str, pattern: str) -> int | None:
+    match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
+    if not match:
+        return None
+    return text.count("\n", 0, match.start()) + 1
+
+
+def _template_variables(files: Iterable[RepositoryFile]) -> dict[str, set[str]]:
+    variables: dict[str, set[str]] = {}
+    for file in files:
+        text = _read_text(file)
+        if text is None:
+            continue
+        names: set[str] = set()
+        for line in text.splitlines():
+            match = re.match(r"^\s*([A-Z][A-Z0-9_]+)\s*=", line)
+            if match:
+                names.add(match.group(1))
+        if names:
+            variables[file.path] = names
+    return variables
+
+
+def _environment_findings(
+    files: list[RepositoryFile], env_templates: list[RepositoryFile]
+) -> list[Finding]:
+    findings: list[Finding] = []
+    templates = _template_variables(env_templates)
+    template_names = set().union(*templates.values()) if templates else set()
+    references: dict[str, list[Evidence]] = {}
+    reference_patterns = (
+        r"(?:process\.env|import\.meta\.env)\.([A-Z][A-Z0-9_]*)",
+        r"(?:os\.environ(?:\.get)?|os\.getenv)\s*\(\s*['\"]([A-Z][A-Z0-9_]*)",
+        r"(?:ENV|System\.getenv)\s*\[?\s*['\"]([A-Z][A-Z0-9_]*)",
+    )
+    secret_pattern = re.compile(
+        r"(?i)(api[_-]?key|access[_-]?token|secret|password|private[_-]?key)"
+        r"\s*[:=]\s*(['\"])(?!\$|<|your_|change_|example|placeholder)[^'\"]{8,}\2"
+    )
+    template_paths = set(templates)
+    for file in files:
+        if file.path in template_paths or file.path.lower().startswith(".env"):
+            continue
+        text = _read_text(file)
+        if text is None:
+            continue
+        for pattern in reference_patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                name = match.group(1).upper()
+                line = text.count("\n", 0, match.start()) + 1
+                references.setdefault(name, []).append(
+                    Evidence(path=file.path, detail=f"Environment variable {name} is referenced", line=line)
+                )
+        secret_match = secret_pattern.search(text)
+        if secret_match:
+            line = text.count("\n", 0, secret_match.start()) + 1
+            findings.append(
+                _category_finding(
+                    code=f"environment.secret_like_{hashlib.sha1(file.path.encode()).hexdigest()[:10]}",
+                    category="environment",
+                    severity="critical",
+                    title="Secret-like value detected in source",
+                    description="A credential-shaped assignment was detected. The value is intentionally redacted from RepoReady evidence.",
+                    remediation="Rotate the value if it is real, remove it from repository history, and load it from a secret store or environment variable.",
+                    evidence=(Evidence(path=file.path, detail="Potential secret-like assignment detected; value redacted", line=line),),
+                )
+            )
+    missing = sorted(set(references) - template_names)
+    if missing:
+        evidence = [item for name in missing for item in references[name]][:8]
+        template_detail = ", ".join(sorted(templates)) if templates else "no environment template"
+        findings.append(
+            _category_finding(
+                code="environment.referenced_variables_missing_from_template",
+                category="environment",
+                severity="medium",
+                title="Referenced environment variables are undocumented",
+                description=f"The source references {', '.join(missing[:8])}, but those names are absent from {template_detail}.",
+                remediation="Add the required variable names to a redacted .env.example or equivalent template without committing secret values.",
+                evidence=evidence,
+            )
+        )
+    return findings
+
+
+def _dependency_findings(
+    files: list[RepositoryFile], primary_dependency_files: list[RepositoryFile], lock_files: list[RepositoryFile]
+) -> list[Finding]:
+    findings: list[Finding] = []
+    by_name = {Path(file.path).name.lower(): file for file in files}
+    manifest_names = {Path(file.path).name.lower() for file in primary_dependency_files}
+    lock_names = {Path(file.path).name.lower() for file in lock_files}
+    if "package.json" in manifest_names and not lock_names.intersection({"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"}):
+        package_file = by_name["package.json"]
+        findings.append(
+            _category_finding(
+                code="dependencies.javascript_lockfile_missing",
+                category="dependencies",
+                severity="high",
+                title="JavaScript lockfile is missing",
+                description="package.json is present, but no npm, pnpm, or Yarn lockfile was found.",
+                remediation="Commit the lockfile produced by the package manager used by the project.",
+                evidence=(Evidence(path=package_file.path, detail="package.json detected without a supported lockfile", line=1),),
+            )
+        )
+    if {"go.mod"}.intersection(manifest_names) and "go.sum" not in lock_names:
+        file = by_name["go.mod"]
+        findings.append(
+            _category_finding(
+                code="dependencies.go_checksum_file_missing",
+                category="dependencies",
+                severity="medium",
+                title="Go checksum file is missing",
+                description="go.mod is present without go.sum, so resolved module checksums are not recorded.",
+                remediation="Run the project’s Go dependency workflow and commit go.sum.",
+                evidence=(Evidence(path=file.path, detail="go.mod detected without go.sum", line=1),),
+            )
+        )
+    if "cargo.toml" in manifest_names and "cargo.lock" not in lock_names:
+        file = by_name["cargo.toml"]
+        findings.append(
+            _category_finding(
+                code="dependencies.rust_lockfile_missing",
+                category="dependencies",
+                severity="medium",
+                title="Rust lockfile is missing",
+                description="Cargo.toml is present without Cargo.lock. Application crates normally commit the lockfile for reproducible builds.",
+                remediation="Generate and commit Cargo.lock when this is an application rather than a published library.",
+                evidence=(Evidence(path=file.path, detail="Cargo.toml detected without Cargo.lock", line=1),),
+            )
+        )
+    manifests_by_family = {
+        "javascript": {"package.json"},
+        "python": {"requirements.txt", "requirements.in", "pyproject.toml", "pipfile"},
+        "rust": {"cargo.toml"},
+        "go": {"go.mod"},
+        "java": {"pom.xml", "build.gradle", "build.gradle.kts"},
+    }
+    for family, names in manifests_by_family.items():
+        present = sorted(manifest_names.intersection(names))
+        if len(present) > 1:
+            evidence = tuple(Evidence(path=by_name[name].path, detail=f"{family.title()} dependency manifest") for name in present)
+            findings.append(
+                _category_finding(
+                    code=f"dependencies.multiple_{family}_manifests",
+                    category="dependencies",
+                    severity="medium",
+                    title=f"Multiple {family} dependency manifests detected",
+                    description="Multiple manifests for the same ecosystem can drift unless the project documents which one is authoritative.",
+                    remediation="Choose one authoritative manifest or document the relationship and keep generated files synchronized.",
+                    evidence=evidence,
+                )
+            )
+    package_file = by_name.get("package.json")
+    if package_file:
+        text = _read_text(package_file) or ""
+        try:
+            package = json.loads(text)
+        except json.JSONDecodeError:
+            package = {}
+        dependency_sections = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+        suspicious: list[str] = []
+        for section in dependency_sections:
+            values = package.get(section, {}) if isinstance(package, dict) else {}
+            if isinstance(values, dict):
+                suspicious.extend(
+                    f"{section}.{name}={value}"
+                    for name, value in values.items()
+                    if isinstance(value, str) and (value in {"*", "latest"} or value.startswith(("^", "~", ">", "<")))
+                )
+        if suspicious:
+            findings.append(
+                _category_finding(
+                    code="dependencies.javascript_range_versions",
+                    category="dependencies",
+                    severity="medium",
+                    title="JavaScript dependencies use ranges or floating tags",
+                    description="At least one dependency is declared with a range or floating tag instead of an exact version.",
+                    remediation="Use the project’s lockfile as the reproducible resolution and review broad ranges intentionally.",
+                    evidence=(Evidence(path=package_file.path, detail=f"{len(suspicious)} dependency declaration(s) use a range or floating tag", line=1),),
+                )
+            )
+    for file in files:
+        if Path(file.path).name.lower() not in {"requirements.txt", "requirements.in"}:
+            continue
+        text = _read_text(file) or ""
+        unpinned = [index for index, line in enumerate(text.splitlines(), 1) if line.strip() and not line.lstrip().startswith("#") and re.match(r"^[A-Za-z0-9_.-]+\s*$", line.strip())]
+        if unpinned:
+            findings.append(
+                _category_finding(
+                    code="dependencies.python_unpinned_requirements",
+                    category="dependencies",
+                    severity="medium",
+                    title="Python requirements include unpinned entries",
+                    description="At least one requirements entry has no version constraint, so resolution can change between installs.",
+                    remediation="Pin direct dependencies or document why an unconstrained entry is intentional, then commit a resolver lockfile where appropriate.",
+                    evidence=(Evidence(path=file.path, detail=f"Unpinned requirement found at line {unpinned[0]}", line=unpinned[0]),),
+                )
+            )
+    return findings
+
+
+def _docker_findings(files: list[RepositoryFile], dockerfiles: list[RepositoryFile], dockerignore_files: list[RepositoryFile]) -> list[Finding]:
+    findings: list[Finding] = []
+    if dockerfiles and not dockerignore_files:
+        findings.append(
+            _category_finding(
+                code="docker.dockerignore_missing",
+                category="docker",
+                severity="low",
+                title=".dockerignore is missing",
+                description="A Dockerfile is present without a .dockerignore, which can send unnecessary or sensitive files into the build context.",
+                remediation="Add a .dockerignore covering VCS metadata, dependencies, local secrets, and generated output.",
+                evidence=(Evidence(path=dockerfiles[0].path, detail="Dockerfile detected without .dockerignore", line=1),),
+            )
+        )
+    known_paths = {file.path for file in files}
+    for dockerfile in dockerfiles:
+        text = _read_text(dockerfile) or ""
+        for line_number, line in enumerate(text.splitlines(), 1):
+            match = re.match(r"\s*FROM\s+([^\s]+)", line, flags=re.IGNORECASE)
+            if match:
+                image = match.group(1)
+                if "@sha256:" not in image and ":" not in image.rsplit("/", 1)[-1]:
+                    findings.append(
+                        _category_finding(
+                            code="docker.base_image_tag_missing",
+                            category="docker",
+                            severity="medium",
+                            title="Docker base image is not versioned",
+                            description="A Docker FROM instruction uses an image without an explicit tag or digest.",
+                            remediation="Pin the base image to a reviewed version or immutable digest.",
+                            evidence=(Evidence(path=dockerfile.path, detail=f"Unpinned base image: {image}", line=line_number),),
+                        )
+                    )
+                elif "@sha256:" not in image and re.search(r":\d+-(?:slim|alpine|bookworm|bullseye|buster)$", image) and not re.search(r":\d+\.\d+\.\d+", image):
+                    findings.append(
+                        _category_finding(
+                            code="docker.base_image_tag_broad",
+                            category="docker",
+                            severity="low",
+                            title="Docker base image tag is broad",
+                            description="The base image has a major/minor family tag but not a patch-level version or digest.",
+                            remediation="Prefer a patch-level tag or digest when deterministic rebuilds matter.",
+                            evidence=(Evidence(path=dockerfile.path, detail=f"Broad base image tag: {image}", line=line_number),),
+                        )
+                    )
+            copy_match = re.match(r"\s*(?:COPY|ADD)\s+(.+?)\s+[^\s]+\s*$", line, flags=re.IGNORECASE)
+            if copy_match:
+                sources = copy_match.group(1).split()
+                for source in sources:
+                    if source.startswith("--") or source.startswith(("http://", "https://")) or source in {".", "./"}:
+                        continue
+                    source_path = source.lstrip("./")
+                    if source_path not in known_paths and not any(path.startswith(f"{source_path}/") for path in known_paths):
+                        findings.append(
+                            _category_finding(
+                                code=f"docker.referenced_file_missing_{hashlib.sha1(source_path.encode()).hexdigest()[:10]}",
+                                category="docker",
+                                severity="high",
+                                title="Dockerfile references a missing file",
+                                description="A COPY or ADD instruction names a path that was not found in the scanned repository.",
+                                remediation="Add the referenced file, correct the path, or remove the stale Docker instruction.",
+                                evidence=(Evidence(path=dockerfile.path, detail=f"Missing build-context path: {source_path}", line=line_number),),
+                            )
+                        )
+    return findings
+
+
+def _documentation_findings(files: list[RepositoryFile], readme_files: list[RepositoryFile]) -> list[Finding]:
+    findings: list[Finding] = []
+    readme_text = "\n".join((_read_text(file) or "") for file in readme_files)
+    if readme_files and readme_text and not re.search(r"\b(npm|pnpm|yarn|pip|pytest|cargo|go\s+test|make|docker|uvicorn|python)\b", readme_text, flags=re.IGNORECASE):
+        findings.append(
+            _category_finding(
+                code="documentation.setup_commands_missing",
+                category="documentation",
+                severity="medium",
+                title="README does not show setup or test commands",
+                description="A README exists, but no recognizable install, test, runtime, or container command was found.",
+                remediation="Document exact setup, run, test, and deployment commands for a clean checkout.",
+                evidence=(Evidence(path=readme_files[0].path, detail="README text contains no recognized project commands", line=1),),
+            )
+        )
+    for file in files:
+        text = _read_text(file) or ""
+        todo_match = re.search(r"\b(TODO|FIXME)\b", text, flags=re.IGNORECASE)
+        if todo_match:
+            line = text.count("\n", 0, todo_match.start()) + 1
+            marker = todo_match.group(1).upper()
+            findings.append(
+                _category_finding(
+                    code=f"documentation.maintenance_{marker.lower()}_{hashlib.sha1(file.path.encode()).hexdigest()[:10]}",
+                    category="documentation",
+                    severity="low",
+                    title=f"{marker} maintenance note detected",
+                    description="A TODO or FIXME marker is present. RepoReady treats this as a maintenance observation, not a verified failure.",
+                    remediation="Track the work in the project issue system or remove the marker when the task is complete.",
+                    evidence=(Evidence(path=file.path, detail=f"{marker} marker detected; content not expanded", line=line),),
+                )
+            )
+    return findings
+
+
+def _apply_score_penalties(category_scores: dict[str, int], findings: Iterable[Finding]) -> dict[str, int]:
+    adjusted = dict(category_scores)
+    for finding in findings:
+        penalty = SEVERITY_PENALTIES.get(finding.severity, 0)
+        if penalty:
+            adjusted[finding.category] = max(0, adjusted.get(finding.category, 0) - penalty)
+    return adjusted
 
 
 def scan_repository(root: Path, *, limits: ScanLimits | None = None) -> ScanReport:
@@ -598,6 +935,12 @@ def scan_repository(root: Path, *, limits: ScanLimits | None = None) -> ScanRepo
                 evidence=(Evidence(path=".", detail="No supported documentation found"),),
             )
         )
+
+    findings.extend(_dependency_findings(files, primary_dependency_files, lock_files))
+    findings.extend(_environment_findings(files, env_templates))
+    findings.extend(_docker_findings(files, dockerfiles, dockerignore_files))
+    findings.extend(_documentation_findings(files, readme_files))
+    category_scores = _apply_score_penalties(category_scores, findings)
 
     languages = sorted(
         {

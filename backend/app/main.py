@@ -163,12 +163,15 @@ def _dashboard(database: Database) -> dict[str, object]:
     critical_count = 0
     high_count = 0
 
-    for bundle in bundles[:8]:
+    for bundle in bundles:
         findings = bundle.get("findings", [])
         findings = findings if isinstance(findings, list) else []
         total_findings += len(findings)
         critical_count += sum(1 for finding in findings if finding.get("severity") == "critical")
         high_count += sum(1 for finding in findings if finding.get("severity") == "high")
+    for bundle in bundles[:8]:
+        findings = bundle.get("findings", [])
+        findings = findings if isinstance(findings, list) else []
         status_value = str(bundle.get("status", "failed"))
         recent_scans.append(
             {

@@ -76,3 +76,19 @@ def test_scan_file_limit_is_enforced(tmp_path: Path):
         assert "more than 2 files" in str(exc)
     else:  # pragma: no cover - assertion branch
         raise AssertionError("expected ScanLimitError")
+
+
+def test_issue_fixture_detects_unpinned_dependencies_environment_secrets_and_docker_gaps(fixture_root: Path):
+    report = scan_repository(fixture_root / "issues_repo")
+    codes = {finding.code for finding in report.findings}
+
+    assert "dependencies.javascript_lockfile_missing" in codes
+    assert "dependencies.javascript_range_versions" in codes
+    assert "environment.referenced_variables_missing_from_template" in codes
+    assert any(finding.severity == "critical" for finding in report.findings)
+    assert any(finding.code.startswith("docker.referenced_file_missing_") for finding in report.findings)
+    assert any(finding.code.startswith("documentation.maintenance_todo_") for finding in report.findings)
+    assert report.score < 60
+    secret_finding = next(finding for finding in report.findings if finding.severity == "critical")
+    assert "sk_live" not in " ".join(item.detail for item in secret_finding.evidence)
+    assert all(item.path for finding in report.findings for item in finding.evidence)

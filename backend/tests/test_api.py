@@ -70,6 +70,13 @@ def test_health_and_upload_persist_findings_and_exports(client, fixture_root: Pa
     assert history.status_code == 200
     assert history.json()["items"][0]["id"] == scan_id
 
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    dashboard_body = dashboard.json()
+    assert dashboard_body["metrics"]
+    assert dashboard_body["recentScans"][0]["id"] == scan_id
+    assert dashboard_body["recentScans"][0]["score"] == 94
+
 
 def test_history_comparison_reports_score_and_finding_changes(client, fixture_root: Path):
     complete = _upload(client, fixture_root / "complete_repo")

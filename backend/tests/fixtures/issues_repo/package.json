@@ -1,0 +1,7 @@
+{
+  "name": "issues-fixture",
+  "dependencies": {
+    "express": "^4.18.0",
+    "lodash": "*"
+  }
+}
